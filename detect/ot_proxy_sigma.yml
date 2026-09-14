@@ -1,0 +1,25 @@
+title: Unexpected Python Modbus Relay Pattern on OT Engineering Host
+id: d122a3a7-35e7-46a8-9b81-ef855ada59b2
+status: experimental
+description: Correlates a Python listener on TCP/502 with simultaneous HMI and PLC connections.
+logsource:
+  product: windows
+  category: network_connection
+detection:
+  python_image:
+    Image|endswith:
+      - '\python.exe'
+      - '\python3.exe'
+  modbus_endpoint:
+    DestinationPort: 502
+  ot_peers:
+    DestinationIp:
+      - '192.168.100.10'
+      - '192.168.100.20'
+  condition: python_image and modbus_endpoint and ot_peers
+falsepositives:
+  - Approved socket-based OT test harnesses; the supplied emulator itself opens no sockets.
+level: high
+tags:
+  - attack.collection
+  - attack.t0802

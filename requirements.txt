@@ -1,0 +1,4 @@
+mininet==2.3.0.dev6
+networkx==3.5
+pandas==2.3.3
+pytest==8.4.2
