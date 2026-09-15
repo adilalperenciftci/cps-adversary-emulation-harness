@@ -1,3 +1,5 @@
+import time
+
 try:
     from mininet.topo import Topo
 except ImportError:
@@ -45,16 +47,62 @@ class CpsTwinTopo(Topo):
 topos = {"cpstwin": CpsTwinTopo}
 
 
+def _probe(host: object, address: str, port: int) -> bool:
+    output = host.cmd(
+        "python3 -c \"import socket; "
+        f"socket.create_connection(('{address}', {port}), 1).close()\"; "
+        "printf '__CPS_RC__%s' $?"
+    )
+    return output.rpartition("__CPS_RC__")[2].strip() == "0"
+
+
+def verify_segmentation(net: object) -> dict[str, bool]:
+    historian = net.get("historian")
+    plc = net.get("openplc01")
+    historian.cmd(
+        "python3 -m http.server 443 --bind 10.0.20.20 "
+        ">/tmp/cps-historian.log 2>&1 &"
+    )
+    plc.cmd(
+        "python3 -m http.server 502 --bind 192.168.100.20 "
+        ">/tmp/cps-openplc.log 2>&1 &"
+    )
+    time.sleep(0.2)
+    try:
+        results = {
+            "enterprise_to_historian_https": _probe(
+                net.get("corp01"), "10.0.20.20", 443
+            ),
+            "historian_to_plc_modbus": _probe(historian, "192.168.100.20", 502),
+            "hmi_to_plc_modbus": _probe(net.get("hmi01"), "192.168.100.20", 502),
+            "enterprise_to_ot_blocked": not _probe(
+                net.get("corp01"), "192.168.100.20", 502
+            ),
+            "ot_to_enterprise_blocked": not _probe(
+                plc, "10.0.10.11", 443
+            ),
+        }
+    finally:
+        historian.cmd("pkill -f 'http.server 443' || true")
+        plc.cmd("pkill -f 'http.server 502' || true")
+    if not all(results.values()):
+        raise RuntimeError(f"segmentation verification failed: {results}")
+    return results
+
+
 def main() -> int:
     from mininet.net import Mininet
+    from mininet.nodelib import LinuxBridge
 
     from lab.firewall import apply_segmentation
 
-    net = Mininet(topo=CpsTwinTopo(), controller=None)
+    net = Mininet(topo=CpsTwinTopo(), controller=None, switch=LinuxBridge)
     try:
         net.start()
         apply_segmentation(net)
         print(net.get("fw01").cmd("iptables -S FORWARD"), end="")
+        for check, passed in verify_segmentation(net).items():
+            print(f"{check}={'PASS' if passed else 'FAIL'}")
     finally:
         net.stop()
     return 0

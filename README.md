@@ -44,10 +44,11 @@ python -m sim.prop_sim --epochs 500 --seed 1337 --jsonl artifacts/propagation.js
 python -m ot.modbus_proxy --plc 192.168.100.20 --listen 192.168.100.15 --baseline-sec 5 --attack-rpm 3200 --max-safe-rpm 3500 --attack-sec 5 --max-runtime 20 --seed 1337 --dry-run --pcap artifacts/exp-03.pcap
 python -m detect.jitter_detect artifacts/modbus_proxy.jsonl
 python -m detect.process_invariant artifacts/modbus_proxy.jsonl
+sudo python3 -m lab.topology
 sudo ./scripts/run_lab.sh
 ```
 
-Mininet requires Linux and root privileges. The topology creates namespaces and switches only; it does not launch the OT emulator or any exploit.
+Mininet requires Linux and root privileges. `python3 -m lab.topology` starts the Linux-bridge topology, installs the fail-closed forwarding policy, verifies both permitted paths and both denied cross-zone paths, then stops the lab. `run_lab.sh` applies the same policy before opening the Mininet CLI. The topology does not launch the OT emulator or any exploit.
 
 ## Sanitized event
 
