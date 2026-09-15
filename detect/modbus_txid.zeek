@@ -10,15 +10,18 @@ export {
 type FlowState: record {
     last_tx: count &default=0;
     last_unit: count &default=0;
-    pending: set[count];
     last_fc: count &default=0;
+    pending: set[count];
 };
 
 global state: table[conn_id] of FlowState;
 
 event modbus_message(c: connection, headers: ModbusHeaders, is_orig: bool) {
-    if ( c$id !in state )
-        state[c$id] = [$last_tx=headers$tid, $last_unit=headers$uid];
+    if ( c$id !in state ) {
+        local initial_pending: set[count] = set();
+        state[c$id] = [$last_tx=headers$tid, $last_unit=headers$uid,
+                       $pending=initial_pending];
+    }
     local s = state[c$id];
     local bad = F;
     local why = "";
@@ -32,12 +35,14 @@ event modbus_message(c: connection, headers: ModbusHeaders, is_orig: bool) {
         delete s$pending[headers$tid];
     }
     if ( s$last_unit != 0 && headers$uid != s$last_unit ) { bad = T; why = "unit ID changed"; }
-    if ( s$last_fc == 16 && headers$fc == 3 && ! is_orig ) { bad = T; why = "unexpected write/read response transition"; }
+    if ( s$last_fc == 16 && headers$function_code == 3 && ! is_orig ) { bad = T; why = "unexpected write/read response transition"; }
     if ( bad ) NOTICE([$note=Modbus_Transaction_Anomaly, $conn=c, $msg=why]);
     s$last_tx = headers$tid;
     s$last_unit = headers$uid;
-    s$last_fc = headers$fc;
+    s$last_fc = headers$function_code;
     state[c$id] = s;
 }
 
-event connection_state_remove(c: connection) { delete state[c$id]; }
+event connection_state_remove(c: connection) {
+    delete state[c$id];
+}

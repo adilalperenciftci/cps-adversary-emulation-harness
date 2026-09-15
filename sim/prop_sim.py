@@ -59,8 +59,6 @@ def run_sim(epochs: int, seed: int, cfg: SimConfig | None = None) -> list[dict[s
     for epoch in range(epochs):
         transitions: dict[str, NodeState] = {}
         for src, dst, edge in sorted(graph.edges(data=True)):
-            src_state = graph.nodes[src]["state"]
-            dst_state = graph.nodes[dst]["state"]
             for infected, candidate in ((src, dst), (dst, src)):
                 if graph.nodes[infected]["state"] != NodeState.INFECTED:
                     continue

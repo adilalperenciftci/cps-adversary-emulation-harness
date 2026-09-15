@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 trap 'sudo mn -c >/dev/null 2>&1 || true' EXIT
-sudo mn --custom lab/topology.py --topo cpstwin --controller none
+sudo python3 - <<'PY'
+from mininet.cli import CLI
+from mininet.net import Mininet
+
+from lab.firewall import apply_segmentation
+from lab.topology import CpsTwinTopo
+
+net = Mininet(topo=CpsTwinTopo(), controller=None)
+try:
+    net.start()
+    apply_segmentation(net)
+    CLI(net)
+finally:
+    net.stop()
+PY

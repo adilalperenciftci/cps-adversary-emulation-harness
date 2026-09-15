@@ -26,12 +26,12 @@ Enterprise hosts can reach only the historian's modeled HTTPS service. The histo
 
 | Detector | EXP-01 baseline | EXP-02 manipulation | EXP-03 manipulation + replay |
 |---|---:|---:|---:|
-| Zeek Modbus | expected quiet | low | alert on imported synthetic trace |
-| Timing | quiet | quiet | alert |
-| Process invariant | quiet | optional | alert |
+| Zeek Modbus | 0 alerts | 0 alerts | 7 alerts |
+| Timing | 0 alerts | 0 alerts | 7 alerts |
+| Process invariant | 0 alerts | 0 alerts | 1 alert |
 | Endpoint Sigma | quiet | optional | evaluates only external endpoint telemetry |
 
-EXP-01 leaves the target at nominal RPM and records process noise. EXP-02 changes the in-memory target while presenting the real value. EXP-03 presents sampled baseline values while separately recording the real process value. RESTORE always resets the target to nominal.
+EXP-01 leaves the target at nominal RPM and records process noise. EXP-02 changes the in-memory target while presenting the real value. EXP-03 presents sampled baseline values while separately recording the real process value. Manipulation runs restore the target to nominal during shutdown. Counts above are from fixed-seed, short-duration validation; they are regression evidence, not performance benchmarks.
 
 ## Run
 
@@ -41,8 +41,9 @@ python -m venv .venv
 pip install -r requirements.txt
 pytest -q
 python -m sim.prop_sim --epochs 500 --seed 1337 --jsonl artifacts/propagation.jsonl
-python -m ot.modbus_proxy --plc 192.168.100.20 --listen 192.168.100.15 --baseline-sec 5 --attack-rpm 3200 --max-safe-rpm 3500 --attack-sec 5 --max-runtime 20 --seed 1337 --dry-run
+python -m ot.modbus_proxy --plc 192.168.100.20 --listen 192.168.100.15 --baseline-sec 5 --attack-rpm 3200 --max-safe-rpm 3500 --attack-sec 5 --max-runtime 20 --seed 1337 --dry-run --pcap artifacts/exp-03.pcap
 python -m detect.jitter_detect artifacts/modbus_proxy.jsonl
+python -m detect.process_invariant artifacts/modbus_proxy.jsonl
 sudo ./scripts/run_lab.sh
 ```
 

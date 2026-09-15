@@ -1,4 +1,11 @@
+import argparse
+import json
+import math
 from dataclasses import dataclass
+from pathlib import Path
+
+MAX_INPUT_BYTES = 10 * 1024 * 1024
+MAX_RECORDS = 100_000
 
 
 @dataclass(frozen=True)
@@ -30,3 +37,49 @@ def detect(samples: list[ProcessSample], threshold: float = 80.0, consecutive: i
                 alerts.append(Alert("FLAT_REPLAY_DURING_TARGET_CHANGE", idx - consecutive, consecutive))
                 break
     return alerts
+
+
+def load_samples(path: Path) -> list[ProcessSample]:
+    if path.stat().st_size > MAX_INPUT_BYTES:
+        raise ValueError("telemetry exceeds byte budget")
+    samples: list[ProcessSample] = []
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if line_number > MAX_RECORDS:
+                raise ValueError("telemetry exceeds record budget")
+            try:
+                event = json.loads(
+                    line, parse_constant=lambda value: _reject_constant(value)
+                )
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ValueError(f"invalid telemetry at line {line_number}") from exc
+            if event.get("event_type") not in {"modbus_read", "replay_event"}:
+                continue
+            try:
+                values = tuple(
+                    float(event[field])
+                    for field in ("requested_value", "real_value", "presented_value")
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"invalid telemetry at line {line_number}") from exc
+            if not all(math.isfinite(value) for value in values):
+                raise ValueError(f"non-finite telemetry at line {line_number}")
+            samples.append(ProcessSample(*values))
+    return samples
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Detect digital-twin process invariant violations")
+    parser.add_argument("input", type=Path)
+    args = parser.parse_args()
+    for alert in detect(load_samples(args.input)):
+        print(json.dumps(alert.__dict__, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
