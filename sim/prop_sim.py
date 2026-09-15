@@ -10,6 +10,8 @@ import networkx as nx
 from sim.models import NodeState, SimConfig, clamp_probability
 
 LOG = logging.getLogger("prop_sim")
+OS_EXPOSURE_FACTOR = {"windows": 1.0, "linux": 0.8}
+EDR_EXPOSURE_FACTOR = 0.65
 
 
 def build_graph() -> nx.Graph:
@@ -50,6 +52,24 @@ def sim_usb_drop(rng: random.Random, probability: float) -> tuple[bool, float]:
     return sample < probability, sample
 
 
+def infection_probability(
+    cfg: SimConfig, node: dict[str, Any], edge: dict[str, Any],
+) -> float:
+    os_factor = OS_EXPOSURE_FACTOR.get(str(node["os_type"]), 1.0)
+    edr_factor = EDR_EXPOSURE_FACTOR if node["edr_present"] else 1.0
+    bandwidth_factor = min(1.0, float(edge["bandwidth"]) / 100.0)
+    return clamp_probability(
+        cfg.base_rate
+        * edge["trust"]
+        * edge["transfer_frequency"]
+        * bandwidth_factor
+        * node["exposure"]
+        * (1.0 - node["patch_level"])
+        * os_factor
+        * edr_factor
+    )
+
+
 def run_sim(epochs: int, seed: int, cfg: SimConfig | None = None) -> list[dict[str, Any]]:
     cfg = cfg or SimConfig()
     graph = build_graph()
@@ -64,16 +84,28 @@ def run_sim(epochs: int, seed: int, cfg: SimConfig | None = None) -> list[dict[s
                     continue
                 if graph.nodes[candidate]["state"] != NodeState.SUSCEPTIBLE:
                     continue
-                if graph.nodes[candidate]["air_gap"] and edge["usb_probability"] > 0:
-                    hit, sample = sim_usb_drop(rng, edge["usb_probability"])
-                    events.append(_event(exp_id, epoch, "usb_sample", src=infected, dst=candidate, probability=edge["usb_probability"], sample=sample))
+                crosses_air_gap = (
+                    graph.nodes[infected]["zone"] != graph.nodes[candidate]["zone"]
+                    and (
+                        graph.nodes[infected]["air_gap"]
+                        or graph.nodes[candidate]["air_gap"]
+                    )
+                )
+                if crosses_air_gap or edge["bandwidth"] <= 0:
+                    usb_probability = clamp_probability(
+                        edge["usb_probability"] * edge["transfer_frequency"]
+                    )
+                    hit, sample = sim_usb_drop(rng, usb_probability)
+                    events.append(_event(
+                        exp_id, epoch, "usb_sample", src=infected, dst=candidate,
+                        probability=usb_probability, sample=sample,
+                    ))
                     if hit:
                         transitions[candidate] = NodeState.INFECTED
                         events.append(_event(exp_id, epoch, "usb_transfer", src=infected, dst=candidate))
                     continue
-                probability = clamp_probability(
-                    cfg.base_rate * edge["trust"] * graph.nodes[candidate]["exposure"]
-                    * (1.0 - graph.nodes[candidate]["patch_level"])
+                probability = infection_probability(
+                    cfg, graph.nodes[candidate], edge
                 )
                 if rng.random() < probability:
                     transitions[candidate] = NodeState.INFECTED

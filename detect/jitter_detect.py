@@ -44,7 +44,6 @@ def analyze(
 ) -> pd.DataFrame:
     frame = pd.DataFrame.from_records(_read_rows(path))
     frame = frame.sort_values("timestamp")
-    frame["delta_t"] = frame["timestamp"].diff()
     frame["ewma_latency"] = frame["latency_ms"].ewm(span=window, adjust=False).mean()
     history = frame["latency_ms"].shift(1)
     frame["baseline"] = history.rolling(window, min_periods=5).median()
@@ -57,8 +56,11 @@ def analyze(
     frame["anomaly_score"] = score.where(
         denom > 0, deviation.where(deviation == 0, float("inf"))
     ).fillna(0.0)
+    ewma_shift = (frame["ewma_latency"] - frame["baseline"]).abs()
     frame["anomaly"] = (
-        (frame["anomaly_score"] > threshold) & (deviation >= minimum_shift_ms)
+        (frame["anomaly_score"] > threshold)
+        & (deviation >= minimum_shift_ms)
+        & (ewma_shift >= minimum_shift_ms / 3.0)
     )
     frame["flow"] = frame["src"].astype(str) + "->" + frame["dst"].astype(str)
     return frame

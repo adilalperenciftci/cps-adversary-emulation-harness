@@ -3,7 +3,12 @@ import json
 
 import pytest
 
-from detect.process_invariant import ProcessSample, detect, load_samples
+from detect.process_invariant import (
+    ProcessSample,
+    detect,
+    detect_unauthorized_writes,
+    load_samples,
+)
 from detect.jitter_detect import analyze
 from lab.register_map import ProcessConfig
 from ot.modbus_proxy import Emulator
@@ -52,9 +57,9 @@ def test_latency_step_is_detected(tmp_path) -> None:
 def test_experiment_modes_and_restoration(tmp_path) -> None:
     async def execute(experiment: str) -> Emulator:
         emulator = Emulator(
-            ProcessConfig(), 3200, 1337, tmp_path / f"{experiment}.jsonl"
+            ProcessConfig(), 3200, 1337, tmp_path / f"{experiment}.jsonl", 0.0
         )
-        await emulator.run(experiment, 0.35, 0.7, 3.0, False)
+        await emulator.run(experiment, 0.35, 0.7, 3.0)
         return emulator
 
     baseline = asyncio.run(execute("EXP-01"))
@@ -80,6 +85,50 @@ def test_experiment_modes_and_restoration(tmp_path) -> None:
         {"timestamp", "component", "event_type", "experiment_id"} <= event.keys()
         for event in parsed
     )
+
+
+def test_flat_replay_does_not_hide_later_divergence() -> None:
+    samples = [
+        ProcessSample(1800, 1800, 1800),
+        ProcessSample(2200, 1800, 1800),
+        ProcessSample(2600, 1800, 1800),
+        ProcessSample(3200, 2800, 1800),
+        ProcessSample(3200, 2900, 1800),
+        ProcessSample(3200, 3000, 1800),
+    ]
+    alerts = detect(samples, consecutive=3)
+    assert {alert.reason for alert in alerts} == {
+        "FLAT_REPLAY_DURING_TARGET_CHANGE",
+        "REAL_PRESENTED_DIVERGENCE",
+    }
+    flat = next(
+        alert for alert in alerts if alert.reason == "FLAT_REPLAY_DURING_TARGET_CHANGE"
+    )
+    assert (flat.start_index, flat.count) == (0, 3)
+
+
+def test_unapproved_setpoint_writer_is_detected() -> None:
+    events = [{
+        "event_type": "modbus_write", "function_code": 6, "register": 40001,
+        "src": "192.168.100.15",
+    }]
+    assert detect_unauthorized_writes(events)[0].reason == "UNAUTHORIZED_SETPOINT_WRITE"
+
+
+def test_approved_setpoint_writer_is_quiet() -> None:
+    events = [{
+        "event_type": "modbus_write", "function_code": 6, "register": 40001,
+        "src": "192.168.100.10",
+    }]
+    assert detect_unauthorized_writes(events) == []
+
+
+def test_timeout_restores_target(tmp_path) -> None:
+    emulator = Emulator(ProcessConfig(), 3200, 7, tmp_path / "timeout.jsonl")
+    with pytest.raises(TimeoutError):
+        asyncio.run(emulator.run("EXP-02", 0.1, 5.0, 0.25))
+    assert emulator.twin.target_rpm == emulator.cfg.nominal_rpm
+    assert emulator.events[-1]["phase"] == "RESTORE"
 
 
 @pytest.mark.parametrize(
